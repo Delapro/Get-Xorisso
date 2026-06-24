@@ -1,0 +1,63 @@
+name: Build portable xorriso for Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+      - name: Setup MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MSYS
+          update: true
+          install: >-
+            xorriso
+            zip
+
+      - name: Collect xorriso.exe and runtime DLLs
+        run: |
+          set -euo pipefail
+
+          OUT="$GITHUB_WORKSPACE/xorriso-windows"
+          mkdir -p "$OUT"
+
+          cp /usr/bin/xorriso.exe "$OUT/"
+
+          # Dependencies ermitteln und kopieren.
+          # ldd liefert MSYS2-/Windows-Pfade; wir kopieren nur existierende Dateien.
+          ldd /usr/bin/xorriso.exe \
+            | awk '
+                /=> \// { print $3 }
+                /^[[:space:]]*\// { print $1 }
+              ' \
+            | sort -u \
+            | while read -r dll; do
+                if [ -f "$dll" ]; then
+                  cp -v "$dll" "$OUT/"
+                fi
+              done
+
+          # Sicherheitsnetz: MSYS2-Runtime ist fast immer nötig.
+          cp -v /usr/bin/msys-2.0.dll "$OUT/" || true
+
+          # Kleine Info-Dateien
+          xorriso -version > "$OUT/xorriso-version.txt" 2>&1 || true
+          pacman -Qi xorriso > "$OUT/msys2-package-info.txt" || true
+
+          cd "$GITHUB_WORKSPACE"
+          zip -r xorriso-windows.zip xorriso-windows
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: xorriso-windows
+          path: xorriso-windows.zip
